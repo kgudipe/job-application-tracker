@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { v4 as uuidv4 } from 'uuid';
+import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { Plus, Pencil, Sparkles } from 'lucide-react';
 import {
@@ -56,7 +57,7 @@ export function JobFormModal({ mode, job }: AddProps | EditProps) {
         }
         return {
             id: uuidv4(), status: 'applied', company_name: '', job_title: '',
-            date_applied: '', job_url: '', notes: '',
+            date_applied: format(new Date(), 'yyyy-MM-dd'), job_url: '', notes: '',
             resume_email: '', resume_phone: '', resume_location: '', resume_notes: '',
         };
     }
