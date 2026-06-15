@@ -21,7 +21,7 @@ import type { Job } from '@/lib/types';
 
 export function JobsTable({ jobs }: { jobs: Job[] }) {
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'company_name', desc: false },
+    { id: 'created_at', desc: true },
   ]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -83,6 +83,28 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
         const db = b.original.date_applied ?? '';
         return da < db ? -1 : da > db ? 1 : 0;
       },
+    },
+    {
+      accessorKey: 'created_at',
+      header: ({ column }) => (
+        <Button variant="ghost" size="sm" className="-ml-3 h-8"
+          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+          Created <ArrowUpDown className="ml-1.5 h-3.5 w-3.5" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const createdAt = new Date(row.original.created_at);
+        return (
+          <span className="block whitespace-nowrap">
+            <span className="block">{format(createdAt, 'MMM d, yyyy')}</span>
+            <span className="block text-xs text-muted-foreground">
+              {format(createdAt, 'h:mm a')}
+            </span>
+          </span>
+        );
+      },
+      sortingFn: (a, b) =>
+        new Date(a.original.created_at).getTime() - new Date(b.original.created_at).getTime(),
     },
     {
       id: 'resume',
