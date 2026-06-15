@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import {
-  useReactTable, getCoreRowModel, getSortedRowModel,
-  getFilteredRowModel, flexRender,
-  type SortingState, type ColumnDef,
+  useReactTable, getCoreRowModel, flexRender, type ColumnDef,
 } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import { ArrowUpDown, ExternalLink } from 'lucide-react';
@@ -19,33 +18,75 @@ import { DeleteJobDialog } from './delete-job-dialog';
 import { jobStatuses } from '@/lib/validations';
 import type { Job } from '@/lib/types';
 
-export function JobsTable({ jobs }: { jobs: Job[] }) {
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: 'created_at', desc: true },
-  ]);
-  const [globalFilter, setGlobalFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+type SortColumn = 'company_name' | 'job_title' | 'date_applied' | 'created_at';
 
-  const filtered = useMemo(() => {
-    let rows = jobs;
-    if (statusFilter !== 'all') rows = rows.filter((j) => j.status === statusFilter);
-    if (globalFilter.trim()) {
-      const q = globalFilter.toLowerCase();
-      rows = rows.filter(
-        (j) =>
-          j.company_name.toLowerCase().includes(q) ||
-          j.job_title.toLowerCase().includes(q),
-      );
+interface JobsTableProps {
+  jobs: Job[];
+  totalCount: number;
+  page: number;
+  pageCount: number;
+  search: string;
+  status: string;
+  sort: SortColumn;
+  direction: 'asc' | 'desc';
+}
+
+export function JobsTable({
+  jobs, totalCount, page, pageCount, search, status, sort, direction,
+}: JobsTableProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [searchInput, setSearchInput] = useState(search);
+  const [pageInput, setPageInput] = useState('');
+
+  const navigate = useCallback((updates: Record<string, string>) => {
+    const params = new URLSearchParams();
+    const current = {
+      page: String(page), search, status, sort, direction,
+      ...updates,
+    };
+
+    if (current.page !== '1') params.set('page', current.page);
+    if (current.search) params.set('search', current.search);
+    if (current.status !== 'all') params.set('status', current.status);
+    if (current.sort !== 'created_at') params.set('sort', current.sort);
+    if (current.direction !== 'desc') params.set('direction', current.direction);
+
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [direction, page, pathname, router, search, sort, status]);
+
+  useEffect(() => {
+    setSearchInput(search);
+  }, [search]);
+
+  useEffect(() => {
+    if (searchInput.trim() === search) return;
+    const timeout = window.setTimeout(() => {
+      navigate({ page: '1', search: searchInput.trim() });
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [navigate, search, searchInput]);
+
+  const changeSort = useCallback((column: SortColumn) => {
+    const nextDirection = sort === column && direction === 'asc' ? 'desc' : 'asc';
+    navigate({ page: '1', sort: column, direction: nextDirection });
+  }, [direction, navigate, sort]);
+
+  function goToPage() {
+    const requestedPage = Number(pageInput);
+    if (Number.isInteger(requestedPage) && requestedPage >= 1 && requestedPage <= pageCount) {
+      navigate({ page: String(requestedPage) });
+      setPageInput('');
     }
-    return rows;
-  }, [jobs, statusFilter, globalFilter]);
+  }
 
   const columns = useMemo<ColumnDef<Job>[]>(() => [
     {
       accessorKey: 'company_name',
       header: ({ column }) => (
         <Button variant="ghost" size="sm" className="-ml-3 h-8"
-          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+          onClick={() => changeSort(column.id as SortColumn)}>
           Company <ArrowUpDown className="ml-1.5 h-3.5 w-3.5" />
         </Button>
       ),
@@ -55,7 +96,7 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
       accessorKey: 'job_title',
       header: ({ column }) => (
         <Button variant="ghost" size="sm" className="-ml-3 h-8"
-          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+          onClick={() => changeSort(column.id as SortColumn)}>
           Title <ArrowUpDown className="ml-1.5 h-3.5 w-3.5" />
         </Button>
       ),
@@ -67,29 +108,11 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
       cell: ({ row }) => <StatusBadge status={row.original.status} />,
     },
     {
-      accessorKey: 'date_applied',
-      header: ({ column }) => (
-        <Button variant="ghost" size="sm" className="-ml-3 h-8"
-          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
-          Applied <ArrowUpDown className="ml-1.5 h-3.5 w-3.5" />
-        </Button>
-      ),
-      cell: ({ row }) =>
-        row.original.date_applied
-          ? format(new Date(row.original.date_applied + 'T00:00:00'), 'MMM d, yyyy')
-          : '—',
-      sortingFn: (a, b) => {
-        const da = a.original.date_applied ?? '';
-        const db = b.original.date_applied ?? '';
-        return da < db ? -1 : da > db ? 1 : 0;
-      },
-    },
-    {
       accessorKey: 'created_at',
       header: ({ column }) => (
         <Button variant="ghost" size="sm" className="-ml-3 h-8"
-          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
-          Created <ArrowUpDown className="ml-1.5 h-3.5 w-3.5" />
+          onClick={() => changeSort(column.id as SortColumn)}>
+          Applied <ArrowUpDown className="ml-1.5 h-3.5 w-3.5" />
         </Button>
       ),
       cell: ({ row }) => {
@@ -103,8 +126,6 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
           </span>
         );
       },
-      sortingFn: (a, b) =>
-        new Date(a.original.created_at).getTime() - new Date(b.original.created_at).getTime(),
     },
     {
       id: 'resume',
@@ -138,26 +159,22 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
         </div>
       ),
     },
-  ], []);
+  ], [changeSort]);
 
   const table = useReactTable({
-    data: filtered, columns,
-    state: { sorting },
-    onSortingChange: setSorting,
+    data: jobs, columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
   });
 
   const filterBar = (
     <div className="flex flex-wrap items-center gap-3">
       <Input
         placeholder="Search company or title…"
-        value={globalFilter}
-        onChange={(e) => setGlobalFilter(e.target.value)}
+        value={searchInput}
+        onChange={(e) => setSearchInput(e.target.value)}
         className="max-w-sm"
       />
-      <Select value={statusFilter} onValueChange={setStatusFilter}>
+      <Select value={status} onValueChange={(value) => navigate({ page: '1', status: value })}>
         <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All statuses</SelectItem>
@@ -169,17 +186,19 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
         </SelectContent>
       </Select>
       <span className="ml-auto text-sm text-muted-foreground">
-        {filtered.length} {filtered.length === 1 ? 'job' : 'jobs'}
+        {totalCount} {totalCount === 1 ? 'job' : 'jobs'}
       </span>
     </div>
   );
 
-  if (filtered.length === 0) {
+  if (jobs.length === 0) {
     return (
       <div className="space-y-4">
         {filterBar}
         <div className="rounded-lg border border-dashed py-16 text-center text-sm text-muted-foreground">
-          {jobs.length === 0 ? 'No jobs yet — add your first one!' : 'No jobs match your filters.'}
+          {totalCount === 0 && !search && status === 'all'
+            ? 'No jobs yet — add your first one!'
+            : 'No jobs match your filters.'}
         </div>
       </div>
     );
@@ -264,6 +283,46 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
             </div>
           );
         })}
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-muted-foreground">
+          Page {page} of {pageCount}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => navigate({ page: String(page - 1) })}
+            disabled={page <= 1}
+          >
+            Previous
+          </Button>
+          <Input
+            type="number"
+            min={1}
+            max={pageCount}
+            placeholder="Page"
+            aria-label="Go to page"
+            className="h-8 w-20"
+            value={pageInput}
+            onChange={(event) => setPageInput(event.target.value)}
+            onBlur={goToPage}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') goToPage();
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => navigate({ page: String(page + 1) })}
+            disabled={page >= pageCount}
+          >
+            Next
+          </Button>
+        </div>
       </div>
     </div>
   );
