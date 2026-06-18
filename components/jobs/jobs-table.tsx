@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useOptimistic, useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   useReactTable, getCoreRowModel, flexRender, type ColumnDef,
 } from '@tanstack/react-table';
 import { format } from 'date-fns';
-import { ArrowUpDown, ExternalLink } from 'lucide-react';
+import { ArrowUpDown, Download, ExternalLink, Eye } from 'lucide-react';
+import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -16,7 +17,8 @@ import { StatusBadge } from './status-badge';
 import { JobFormModal } from './job-form-modal';
 import { DeleteJobDialog } from './delete-job-dialog';
 import { jobStatuses } from '@/lib/validations';
-import type { Job } from '@/lib/types';
+import { updateJobStatus } from '@/app/actions/jobs';
+import type { Job, JobStatus } from '@/lib/types';
 
 type SortColumn = 'company_name' | 'job_title' | 'date_applied' | 'created_at';
 
@@ -29,6 +31,151 @@ interface JobsTableProps {
   status: string;
   sort: SortColumn;
   direction: 'asc' | 'desc';
+}
+
+function formatStatus(status: JobStatus) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function InlineStatusSelect({ job }: { job: Job }) {
+  const router = useRouter();
+  const [optimisticStatus, setOptimisticStatus] = useOptimistic(job.status);
+  const [editing, setEditing] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  function handleStatusChange(value: string) {
+    const nextStatus = value as JobStatus;
+    setEditing(false);
+    if (nextStatus === optimisticStatus) return;
+
+    startTransition(async () => {
+      setOptimisticStatus(nextStatus);
+      const result = await updateJobStatus(job.id, nextStatus);
+      if (result.error) {
+        toast.error(typeof result.error === 'string' ? result.error : 'Could not update status');
+        return;
+      }
+
+      toast.success('Status updated');
+      router.refresh();
+    });
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className="rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        onClick={() => setEditing(true)}
+        disabled={isPending}
+        title="Change status"
+        aria-label={`Change status for ${job.company_name} ${job.job_title}`}
+      >
+        <StatusBadge status={optimisticStatus} />
+      </button>
+    );
+  }
+
+  return (
+    <Select
+      value={optimisticStatus}
+      onValueChange={handleStatusChange}
+      open={editing}
+      onOpenChange={(open) => setEditing(open)}
+      disabled={isPending}
+    >
+      <SelectTrigger
+        size="sm"
+        aria-label={`Change status for ${job.company_name} ${job.job_title}`}
+        className="w-32 capitalize"
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {jobStatuses.map((s) => (
+          <SelectItem key={s} value={s} className="capitalize">
+            {formatStatus(s)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function JobActions({ job }: { job: Job }) {
+  const [loading, setLoading] = useState<'view' | 'download' | null>(null);
+  const hasResume = !!job.resume_path;
+  const resumeLabel = job.resume_filename || 'resume';
+
+  async function getResumeUrl() {
+    if (!job.resume_path) throw new Error('Missing resume');
+
+    const res = await fetch(`/api/resume/signed-url?path=${encodeURIComponent(job.resume_path)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? 'Failed to get resume URL');
+    return data.url as string;
+  }
+
+  async function handleView() {
+    setLoading('view');
+    try {
+      const url = await getResumeUrl();
+      window.open(url, '_blank');
+    } catch {
+      toast.error('Could not open resume.');
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function handleDownload() {
+    setLoading('download');
+    try {
+      const url = await getResumeUrl();
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = resumeLabel;
+      a.click();
+    } catch {
+      toast.error('Could not download resume.');
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={handleView}
+        disabled={!hasResume || !!loading}
+        title={hasResume ? `View ${resumeLabel}` : 'No resume to view'}
+        aria-label={hasResume ? `View ${resumeLabel}` : 'No resume to view'}
+      >
+        <Eye className="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8"
+        onClick={handleDownload}
+        disabled={!hasResume || !!loading}
+        title={hasResume ? `Download ${resumeLabel}` : 'No resume to download'}
+        aria-label={hasResume ? `Download ${resumeLabel}` : 'No resume to download'}
+      >
+        <Download className="h-3.5 w-3.5" />
+      </Button>
+      <JobFormModal mode="edit" job={job} />
+      <DeleteJobDialog
+        id={job.id}
+        label={`${job.company_name} - ${job.job_title}`}
+      />
+    </div>
+  );
 }
 
 export function JobsTable({
@@ -105,7 +252,7 @@ export function JobsTable({
     {
       accessorKey: 'status',
       header: 'Status',
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      cell: ({ row }) => <InlineStatusSelect job={row.original} />,
     },
     {
       accessorKey: 'created_at',
@@ -149,15 +296,7 @@ export function JobsTable({
     {
       id: 'actions',
       header: '',
-      cell: ({ row }) => (
-        <div className="flex items-center gap-1">
-          <JobFormModal mode="edit" job={row.original} />
-          <DeleteJobDialog
-            id={row.original.id}
-            label={`${row.original.company_name} — ${row.original.job_title}`}
-          />
-        </div>
-      ),
+      cell: ({ row }) => <JobActions job={row.original} />,
     },
   ], [changeSort]);
 
@@ -250,16 +389,12 @@ export function JobsTable({
                   <p className="font-medium leading-tight">{job.company_name}</p>
                   <p className="text-sm text-muted-foreground">{job.job_title}</p>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <JobFormModal mode="edit" job={job} />
-                  <DeleteJobDialog
-                    id={job.id}
-                    label={`${job.company_name} — ${job.job_title}`}
-                  />
+                <div className="shrink-0">
+                  <JobActions job={job} />
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <StatusBadge status={job.status} />
+                <InlineStatusSelect job={job} />
                 {job.date_applied && (
                   <span className="text-xs text-muted-foreground">
                     {format(new Date(job.date_applied + 'T00:00:00'), 'MMM d, yyyy')}

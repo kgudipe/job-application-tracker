@@ -83,6 +83,20 @@ export async function updateJob(values: JobFormValues, file?: File) {
   return { success: true };
 }
 
+export async function updateJobStatus(id: string, status: JobFormValues['status']) {
+  const parsed = jobSchema.pick({ id: true, status: true }).safeParse({ id, status });
+  if (!parsed.success) return { error: parsed.error.flatten().fieldErrors };
+
+  const { error } = await supabase
+    .from('jobs')
+    .update({ status: parsed.data.status })
+    .eq('id', parsed.data.id);
+
+  if (error) return { error: error.message };
+  revalidatePath('/');
+  return { success: true };
+}
+
 export async function deleteJob(id: string) {
   // Remove storage object first if one exists
   const { data } = await supabase
